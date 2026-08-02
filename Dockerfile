@@ -1,15 +1,28 @@
-FROM golang:1.24-alpine AS builder
+FROM node:24-alpine AS frontend
+
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ .
+RUN npm run build
+
+FROM golang:1.26-alpine AS builder
+
+ARG TARGETARCH
+ARG VERSION=dev
 
 WORKDIR /app
 COPY src/go.mod src/go.sum ./
-RUN go mod download
+RUN apk add --no-cache upx && go mod download
 
 COPY src/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o hubproxy .
+COPY --from=frontend /src/dist ./dist
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags="-s -w -X main.Version=${VERSION}" -trimpath -o hubproxy . && upx -9 hubproxy
 
 FROM alpine
 
-WORKDIR /root/
+WORKDIR /app
 
 COPY --from=builder /app/hubproxy .
 COPY --from=builder /app/config.toml .
